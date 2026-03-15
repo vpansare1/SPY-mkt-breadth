@@ -338,7 +338,7 @@ def plot_cap_weighted_history(history_df):
     # Pivot data for plotting
     for window in MOMENTUM_WINDOWS.keys():
         window_data = history_df[history_df['Window'] == window].copy()
-        window_data['Date'] = pd.to_datetime(window_data['Date'])
+        window_data['Date'] = pd.to_datetime(window_data['Date'], format = "mixed")
         window_data = window_data.sort_values('Date')
         
         fig.add_trace(
