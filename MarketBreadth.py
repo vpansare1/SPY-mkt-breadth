@@ -382,7 +382,7 @@ def plot_cap_weighted_history(history_df):
             x=0.01
         ),
         plot_bgcolor='white',
-        xaxis=dict(showgrid=True, gridwidth=1, gridcolor='lightgray',dtick="W1", tickangle = -45),
+        xaxis=dict(showgrid=True, gridwidth=1, gridcolor='lightgray',tickmode = "auto", nticks = "20", tickangle = -45),
         yaxis=dict(range=[0, 100], showgrid=True, gridwidth=1, gridcolor='lightgray')
     )
     
