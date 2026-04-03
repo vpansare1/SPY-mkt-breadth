@@ -39,12 +39,36 @@ def scrape_sp500_components():
     """Scrape S&P 500 components and weights from slickcharts"""
     print("Scraping S&P 500 components from slickcharts.com...")
     url = "https://www.slickcharts.com/sp500"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
-    response = requests.get(url, headers=headers)
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"Error fetching slickcharts: {e}")
+        print("Using cached weights from previous run...")
+        # Load from existing file if available
+        if os.path.exists('sp500_weights_history.csv'):
+            weights_df = pd.read_csv('sp500_weights_history.csv', index_col=0)
+            latest_date = weights_df.columns[-1]
+            latest_weights = weights_df[latest_date].dropna()
+            df = pd.DataFrame({
+                'symbol': latest_weights.index,
+                'weight': latest_weights.values
+            })
+            print(f"Loaded {len(df)} components from cached weights")
+            return df
+        else:
+            raise Exception("Cannot scrape slickcharts and no cached weights available")
+    
     soup = BeautifulSoup(response.content, 'html.parser')
-    
     table = soup.find('table')
+    
+    if table is None:
+        print("ERROR: Could not find table on slickcharts.com")
+        print("Website structure may have changed")
+        raise Exception("Table not found on slickcharts")
+    
     rows = table.find_all('tr')[1:]  # Skip header
     
     # Symbol corrections for Yahoo Finance format
