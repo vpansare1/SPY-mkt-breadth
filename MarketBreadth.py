@@ -55,6 +55,14 @@ def scrape_sp500_components():
         tables = pd.read_html(StringIO(response.text))
         sp500_df = tables[0]
         symbols = sp500_df['Symbol'].tolist()
+        
+        # Fix symbol formats for yfinance
+        symbol_corrections = {
+            'BRK.B': 'BRK-B',
+            'BF.B': 'BF-B'
+        }
+        symbols = [symbol_corrections.get(s, s) for s in symbols]
+        
         print(f"Found {len(symbols)} components from Wikipedia")
         
         # Calculate weights from market caps
