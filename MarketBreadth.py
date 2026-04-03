@@ -36,25 +36,67 @@ DATA_FILE = 'sp500_breadth_history.csv'
 WEIGHTS_FILE = 'sp500_weights_history.csv'
 
 def scrape_sp500_components():
-    """Scrape S&P 500 components and weights from slickcharts"""
-    print("Scraping S&P 500 components from slickcharts.com...")
-    url = "https://www.slickcharts.com/sp500"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Referer': 'https://www.google.com/',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-    }
+    """Get S&P 500 components and calculate weights from market caps"""
+    print("Getting S&P 500 components from Wikipedia...")
     
     try:
+        # Get constituent list from Wikipedia with proper headers
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        
+        # Use requests to get the HTML with headers, then parse with pandas
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
+        
+        tables = pd.read_html(response.text)
+        sp500_df = tables[0]
+        symbols = sp500_df['Symbol'].tolist()
+        print(f"Found {len(symbols)} components from Wikipedia")
+        
+        # Calculate weights from market caps
+        print("Calculating weights from current market caps...")
+        market_caps = {}
+        failed = []
+        
+        for i, symbol in enumerate(symbols, 1):
+            if i % 50 == 0:
+                print(f"  Progress: {i}/{len(symbols)}")
+            
+            try:
+                ticker = yf.Ticker(symbol)
+                info = ticker.info
+                market_cap = info.get('marketCap', 0)
+                if market_cap > 0:
+                    market_caps[symbol] = market_cap
+                else:
+                    failed.append(symbol)
+            except Exception as e:
+                failed.append(symbol)
+                continue
+        
+        if failed:
+            print(f"  Could not get market cap for {len(failed)} symbols: {failed[:10]}...")
+        
+        # Calculate weights as percentage of total market cap
+        total_cap = sum(market_caps.values())
+        weights_dict = {symbol: (cap/total_cap)*100 for symbol, cap in market_caps.items()}
+        
+        df = pd.DataFrame({
+            'symbol': list(weights_dict.keys()),
+            'weight': list(weights_dict.values())
+        })
+        
+        print(f"Calculated weights for {len(df)} components")
+        print(f"Total weight: {df['weight'].sum():.2f}%")
+        
+        return df
+        
     except Exception as e:
-        print(f"Error fetching slickcharts: {e}")
-        print("Using cached weights from previous run...")
+        print(f"Error getting components: {e}")
+        print("Falling back to cached weights...")
+        
         # Load from existing file if available
         if os.path.exists('sp500_weights_history.csv'):
             weights_df = pd.read_csv('sp500_weights_history.csv', index_col=0)
@@ -64,49 +106,10 @@ def scrape_sp500_components():
                 'symbol': latest_weights.index,
                 'weight': latest_weights.values
             })
-            print(f"Loaded {len(df)} components from cached weights")
+            print(f"Loaded {len(df)} components from cached weights ({latest_date})")
             return df
         else:
-            raise Exception("Cannot scrape slickcharts and no cached weights available")
-    
-    soup = BeautifulSoup(response.content, 'html.parser')
-    table = soup.find('table')
-    
-    if table is None:
-        print("ERROR: Could not find table on slickcharts.com")
-        print("Website structure may have changed")
-        raise Exception("Table not found on slickcharts")
-    
-    rows = table.find_all('tr')[1:]  # Skip header
-    
-    # Symbol corrections for Yahoo Finance format
-    symbol_corrections = {
-        'BRK.B': 'BRK-B',
-        'BF.B': 'BF-B'
-    }
-    
-    components = []
-    for row in rows:
-        cols = row.find_all('td')
-        if len(cols) >= 3:
-            symbol = cols[2].text.strip()
-            weight_text = cols[3].text.strip().replace('%', '')
-            
-            # Apply symbol corrections
-            if symbol in symbol_corrections:
-                corrected = symbol_corrections[symbol]
-                print(f"  Correcting symbol: {symbol} -> {corrected}")
-                symbol = corrected
-            
-            try:
-                weight = float(weight_text)
-                components.append({'symbol': symbol, 'weight': weight})
-            except:
-                continue
-    
-    df = pd.DataFrame(components)
-    print(f"Found {len(df)} components")
-    return df
+            raise Exception("Cannot get components and no cached weights available")
 
 def download_price_data(symbols, start_date, end_date):
     """Download historical price data for all symbols"""
