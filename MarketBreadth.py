@@ -50,7 +50,9 @@ def scrape_sp500_components():
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         
-        tables = pd.read_html(response.text)
+        #parse html tables from the response
+        from io import StringIO
+        tables = pd.read_html(StringIO(response.text))
         sp500_df = tables[0]
         symbols = sp500_df['Symbol'].tolist()
         print(f"Found {len(symbols)} components from Wikipedia")
