@@ -216,8 +216,13 @@ def calculate_equal_weighted_breadth(prices_df):
     
     return pd.DataFrame(breadth_data)
 
-def calculate_cap_weighted_breadth(prices_df, weights_df):
-    """Calculate market-cap weighted breadth for most recent day"""
+def calculate_cap_weighted_breadth(prices_df, weights_df, min_total_weight=90.0):
+    """Calculate market-cap weighted breadth for most recent day.
+
+    Skips any window where total_weight < min_total_weight, which indicates
+    a partial data download (silent NaN fill from yfinance). Weights are
+    normalized to sum to ~100, so 90.0 means 90% coverage.
+    """
     latest_date = prices_df.index[-1] #UPDATE THIS TO -2 IF GETTING WEIRD OUTPUTS
     results = []
     
@@ -238,6 +243,13 @@ def calculate_cap_weighted_breadth(prices_df, weights_df):
                 total_weight += weight
                 if latest_momentum[symbol] > 0:
                     positive_weight += weight
+        
+        # Data quality gate: if coverage is too low, the breadth number is meaningless
+        if total_weight < min_total_weight:
+            print(f"  SKIPPING {window_name} for {latest_date.strftime('%Y-%m-%d')}: "
+                  f"total_weight={total_weight:.2f} below threshold {min_total_weight} "
+                  f"(likely partial data download)")
+            continue
         
         breadth_pct = (positive_weight / total_weight * 100) if total_weight > 0 else 0
         
@@ -454,6 +466,17 @@ def main():
         print("ERROR: No price data downloaded. Exiting.")
         return
     
+    # Data quality diagnostics: non-NaN ticker counts for recent dates
+    print("\n" + "-" * 70)
+    print("DATA QUALITY: Non-NaN ticker counts for recent dates")
+    print("-" * 70)
+    total_tickers = prices_df.shape[1]
+    recent_counts = prices_df.tail(10).notna().sum(axis=1)
+    for date, count in recent_counts.items():
+        pct = count / total_tickers * 100
+        flag = "  <-- LOW COVERAGE" if pct < 90 else ""
+        print(f"  {date.strftime('%Y-%m-%d')}: {count}/{total_tickers} ({pct:.1f}%){flag}")
+    
     # 3. Calculate equal-weighted breadth
     print("\n" + "=" * 70)
     print("CALCULATING EQUAL-WEIGHTED BREADTH")
@@ -487,21 +510,25 @@ def main():
     print("\n" + "-" * 70)
     print("MARKET-CAP WEIGHTED BREADTH (CURRENT)")
     print("-" * 70)
-    print(cap_weighted_latest.to_string(index=False))
     
-    # 6. Save and plot cap-weighted history
-    history_df = save_cap_weighted_data(cap_weighted_latest)
-    
-    # 7. Save weights history
-    print("\n" + "=" * 70)
-    print("SAVING S&P 500 WEIGHTS HISTORY")
-    print("=" * 70)
-    
-    latest_date_str = cap_weighted_latest['Date'].iloc[0]
-    weights_history = save_weights_history(components_df, latest_date_str)
-    
-    # 8. Plot cap-weighted history
-    plot_cap_weighted_history(history_df)
+    if cap_weighted_latest.empty:
+        print("No rows passed the data-quality threshold - skipping save for this run.")
+    else:
+        print(cap_weighted_latest.to_string(index=False))
+        
+        # 6. Save and plot cap-weighted history
+        history_df = save_cap_weighted_data(cap_weighted_latest)
+        
+        # 7. Save weights history
+        print("\n" + "=" * 70)
+        print("SAVING S&P 500 WEIGHTS HISTORY")
+        print("=" * 70)
+        
+        latest_date_str = cap_weighted_latest['Date'].iloc[0]
+        weights_history = save_weights_history(components_df, latest_date_str)
+        
+        # 8. Plot cap-weighted history
+        plot_cap_weighted_history(history_df)
     
     print("\n" + "=" * 70)
     print("ANALYSIS COMPLETE!")
