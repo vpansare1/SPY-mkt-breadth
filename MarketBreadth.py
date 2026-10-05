@@ -671,7 +671,7 @@ def plot_cap_weighted_history(history_df):
     fig.show()
     return fig
 
-DASHBOARD_FILE = 'sp500_dashboard.html'
+DASHBOARD_FILE = 'sp500_mkt_breadth_dash.html'
 
 def build_dashboard(sections, as_of, output_file=DASHBOARD_FILE):
     """Write every chart into one self-contained HTML page.
