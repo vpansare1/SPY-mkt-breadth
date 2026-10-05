@@ -381,6 +381,109 @@ def plot_equal_weighted_breadth(breadth_df):
     print("\nSaved interactive equal-weighted breadth plots to 'sp500_equal_weighted_breadth.html'")
     fig.show()
 
+MEDIAN_MOMENTUM_WINDOWS = ['1M', '12M']
+MEDIAN_MIN_STOCKS = 50  # skip days with too few stocks to make a meaningful median
+
+def download_index_prices(start_date, end_date, symbol='SPY'):
+    """Download the cap-weighted index proxy (SPY) for comparison"""
+    try:
+        hist = yf.Ticker(symbol).history(start=start_date, end=end_date)
+        if hist.empty:
+            print(f"WARNING: no price data for {symbol}")
+            return None
+        return hist['Close']
+    except Exception as e:
+        print(f"WARNING: could not download {symbol}: {e}")
+        return None
+
+def calculate_median_momentum(prices_df, index_prices=None):
+    """Cross-sectional median and quartiles of stock momentum, plus the index's own momentum.
+
+    Returns a DataFrame with columns like '1M_median', '1M_p25', '1M_p75', '1M_index', '1M_spread'
+    (spread = index momentum minus median stock momentum, in percentage points).
+    """
+    out = {}
+    for window_name in MEDIAN_MOMENTUM_WINDOWS:
+        window_days = MOMENTUM_WINDOWS[window_name]
+        momentum = calculate_momentum(prices_df, window_days) * 100
+        enough = momentum.notna().sum(axis=1) >= MEDIAN_MIN_STOCKS
+
+        out[f'{window_name}_median'] = momentum.median(axis=1).where(enough)
+        out[f'{window_name}_p25'] = momentum.quantile(0.25, axis=1).where(enough)
+        out[f'{window_name}_p75'] = momentum.quantile(0.75, axis=1).where(enough)
+
+        if index_prices is not None:
+            idx = index_prices.reindex(prices_df.index)
+            idx_mom = (idx / idx.shift(window_days) - 1) * 100
+            out[f'{window_name}_index'] = idx_mom
+            out[f'{window_name}_spread'] = idx_mom - out[f'{window_name}_median']
+
+    df = pd.DataFrame(out)
+    return df.dropna(how='all', subset=[f'{w}_median' for w in MEDIAN_MOMENTUM_WINDOWS])
+
+def plot_median_momentum(median_df, index_label='SPY'):
+    """Median stock momentum vs the cap-weighted index, one panel per window"""
+    has_index = f'{MEDIAN_MOMENTUM_WINDOWS[0]}_index' in median_df.columns
+    fig = make_subplots(
+        rows=len(MEDIAN_MOMENTUM_WINDOWS), cols=1,
+        subplot_titles=[f'{w} Momentum: Median Stock vs {index_label}' if has_index
+                        else f'{w} Momentum: Median Stock' for w in MEDIAN_MOMENTUM_WINDOWS],
+        vertical_spacing=0.10
+    )
+
+    for i, window in enumerate(MEDIAN_MOMENTUM_WINDOWS, 1):
+        show_legend = (i == 1)
+
+        # Interquartile band (25th-75th percentile of stocks)
+        fig.add_trace(go.Scatter(
+            x=median_df.index, y=median_df[f'{window}_p75'],
+            line=dict(width=0), hoverinfo='skip', showlegend=False,
+            legendgroup='iqr'
+        ), row=i, col=1)
+        fig.add_trace(go.Scatter(
+            x=median_df.index, y=median_df[f'{window}_p25'],
+            fill='tonexty', fillcolor='rgba(70,130,180,0.15)',
+            line=dict(width=0), name='25th-75th pct of stocks',
+            showlegend=show_legend, legendgroup='iqr',
+            hovertemplate='25th pct: %{y:.1f}%<extra></extra>'
+        ), row=i, col=1)
+
+        # Median stock
+        fig.add_trace(go.Scatter(
+            x=median_df.index, y=median_df[f'{window}_median'],
+            line=dict(color='steelblue', width=2), name='Median stock',
+            showlegend=show_legend, legendgroup='median',
+            hovertemplate='Median stock: %{y:.1f}%<extra></extra>'
+        ), row=i, col=1)
+
+        # Cap-weighted index
+        if has_index:
+            fig.add_trace(go.Scatter(
+                x=median_df.index, y=median_df[f'{window}_index'],
+                line=dict(color='crimson', width=1.5), name=f'{index_label} (cap-weighted)',
+                showlegend=show_legend, legendgroup='index',
+                hovertemplate=f'{index_label}: ' + '%{y:.1f}%<extra></extra>'
+            ), row=i, col=1)
+
+        fig.add_hline(y=0, line_dash='dash', line_color='gray', line_width=1, row=i, col=1)
+        fig.update_xaxes(showgrid=True, gridcolor='lightgray', dtick='M12', row=i, col=1)
+        fig.update_yaxes(title_text=f'{window} return (%)', showgrid=True,
+                         gridcolor='lightgray', zeroline=False, row=i, col=1)
+
+    fig.update_layout(
+        title_text='S&P 500 Median Stock Momentum vs Cap-Weighted Index',
+        title_font_size=18,
+        height=900,
+        width=1100,
+        hovermode='x unified',
+        plot_bgcolor='white',
+        legend=dict(orientation='h', yanchor='bottom', y=1.03, xanchor='left', x=0)
+    )
+
+    fig.write_html('sp500_median_momentum.html')
+    print("\nSaved interactive median momentum chart to 'sp500_median_momentum.html'")
+    fig.show()
+
 def plot_cap_weighted_history(history_df):
     """Plot historical cap-weighted breadth data"""
     if len(history_df) < 2:
@@ -499,7 +602,22 @@ def main():
     
     # 4. Plot equal-weighted breadth
     plot_equal_weighted_breadth(breadth_df)
-    
+
+    # 4b. Median stock momentum vs cap-weighted index
+    print("\n" + "=" * 70)
+    print("CALCULATING MEDIAN STOCK MOMENTUM")
+    print("=" * 70)
+
+    spy_prices = download_index_prices(start_date, end_date, 'SPY')
+    median_df = calculate_median_momentum(prices_df, spy_prices)
+
+    print("\n" + "-" * 70)
+    print("CURRENT MEDIAN STOCK MOMENTUM (%)")
+    print("-" * 70)
+    print(median_df.tail(1).round(2).T.to_string())
+
+    plot_median_momentum(median_df, 'SPY')
+
     # 5. Calculate cap-weighted breadth for latest day
     print("\n" + "=" * 70)
     print("CALCULATING MARKET-CAP WEIGHTED BREADTH (LATEST DAY)")
@@ -538,6 +656,7 @@ def main():
     print(f"  2. {DATA_FILE} - Historical cap-weighted data")
     print(f"  3. {WEIGHTS_FILE} - Historical S&P 500 constituent weights")
     print(f"  4. sp500_cap_weighted_breadth_history.html - Interactive cap-weighted history chart")
+    print(f"  5. sp500_median_momentum.html - Median stock momentum vs SPY")
     print(f"\nRun this script periodically to build up cap-weighted breadth history and track")
     print(f"S&P 500 constituent weight changes over time.")
 
