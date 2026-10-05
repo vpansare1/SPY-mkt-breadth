@@ -380,6 +380,7 @@ def plot_equal_weighted_breadth(breadth_df):
     fig.write_html('sp500_equal_weighted_breadth.html')
     print("\nSaved interactive equal-weighted breadth plots to 'sp500_equal_weighted_breadth.html'")
     fig.show()
+    return fig
 
 MEDIAN_MOMENTUM_WINDOWS = ['1M', '12M']
 MEDIAN_MIN_STOCKS = 50  # skip days with too few stocks to make a meaningful median
@@ -483,6 +484,7 @@ def plot_median_momentum(median_df, index_label='SPY'):
     fig.write_html('sp500_median_momentum.html')
     print("\nSaved interactive median momentum chart to 'sp500_median_momentum.html'")
     fig.show()
+    return fig
 
 def plot_median_vs_index_spread(median_df, index_label='SPY'):
     """Spread = index momentum minus median stock momentum (percentage points).
@@ -537,6 +539,7 @@ def plot_median_vs_index_spread(median_df, index_label='SPY'):
     fig.write_html('sp500_median_vs_spy_spread.html')
     print("Saved interactive median vs index spread chart to 'sp500_median_vs_spy_spread.html'")
     fig.show()
+    return fig
 
 def calculate_breadth_spread(breadth_df, cap_history_file=DATA_FILE):
     """Spread = cap-weighted breadth minus equal-weighted breadth, on dates with cap-weighted data.
@@ -599,6 +602,7 @@ def plot_breadth_spread(spread_df):
     fig.write_html('sp500_breadth_spread.html')
     print("Saved interactive breadth spread chart to 'sp500_breadth_spread.html'")
     fig.show()
+    return fig
 
 def plot_cap_weighted_history(history_df):
     """Plot historical cap-weighted breadth data"""
@@ -665,6 +669,62 @@ def plot_cap_weighted_history(history_df):
     fig.write_html('sp500_cap_weighted_breadth_history.html')
     print("Saved interactive cap-weighted breadth history to 'sp500_cap_weighted_breadth_history.html'")
     fig.show()
+    return fig
+
+DASHBOARD_FILE = 'sp500_dashboard.html'
+
+def build_dashboard(sections, as_of, output_file=DASHBOARD_FILE):
+    """Write every chart into one self-contained HTML page.
+
+    sections: list of (title, plotly Figure or None). None entries are skipped.
+    plotly.js is embedded once so the page works offline.
+    """
+    sections = [(title, fig) for title, fig in sections if fig is not None]
+    if not sections:
+        print("\nNo charts to put in the dashboard.")
+        return
+
+    nav, blocks = [], []
+    for i, (title, fig) in enumerate(sections):
+        anchor = f'chart-{i + 1}'
+        nav.append(f'<a href="#{anchor}">{title}</a>')
+        chart_html = fig.to_html(full_html=False, include_plotlyjs=(i == 0))
+        blocks.append(f'<section id="{anchor}"><h2>{title}</h2>{chart_html}</section>')
+
+    page = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S&amp;P 500 Breadth Dashboard</title>
+<style>
+  body {{ font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0;
+         background: #f5f6f8; color: #222; }}
+  header {{ background: #1f2937; color: #fff; padding: 18px 24px; }}
+  header h1 {{ margin: 0; font-size: 22px; }}
+  header p {{ margin: 4px 0 0; color: #cbd5e1; font-size: 14px; }}
+  nav {{ position: sticky; top: 0; z-index: 10; background: #fff; border-bottom: 1px solid #ddd;
+        padding: 10px 24px; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; }}
+  nav a {{ color: #1d4ed8; text-decoration: none; }}
+  nav a:hover {{ text-decoration: underline; }}
+  section {{ background: #fff; margin: 20px auto; padding: 12px 16px; max-width: 1160px;
+            border: 1px solid #e5e7eb; border-radius: 6px; overflow-x: auto; scroll-margin-top: 50px; }}
+  section h2 {{ font-size: 17px; margin: 4px 0 8px; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>S&amp;P 500 Market Breadth Dashboard</h1>
+  <p>Data as of {as_of} &middot; generated {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
+</header>
+<nav>{''.join(nav)}</nav>
+{''.join(blocks)}
+</body>
+</html>"""
+
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write(page)
+    print(f"\nSaved combined dashboard with {len(sections)} charts to '{output_file}'")
 
 def main():
     print("=" * 70)
@@ -717,7 +777,7 @@ def main():
     print(breadth_df.tail(1).to_string())
     
     # 4. Plot equal-weighted breadth
-    plot_equal_weighted_breadth(breadth_df)
+    fig_eq_breadth = plot_equal_weighted_breadth(breadth_df)
 
     # 4b. Median stock momentum vs cap-weighted index
     print("\n" + "=" * 70)
@@ -732,8 +792,8 @@ def main():
     print("-" * 70)
     print(median_df.tail(1).round(2).T.to_string())
 
-    plot_median_momentum(median_df, 'SPY')
-    plot_median_vs_index_spread(median_df, 'SPY')
+    fig_median = plot_median_momentum(median_df, 'SPY')
+    fig_median_spread = plot_median_vs_index_spread(median_df, 'SPY')
 
     # 5. Calculate cap-weighted breadth for latest day
     print("\n" + "=" * 70)
@@ -741,6 +801,7 @@ def main():
     print("=" * 70)
     
     cap_weighted_latest = calculate_cap_weighted_breadth(prices_df, components_df)
+    fig_cap_history = None
     
     print("\n" + "-" * 70)
     print("MARKET-CAP WEIGHTED BREADTH (CURRENT)")
@@ -763,7 +824,7 @@ def main():
         weights_history = save_weights_history(components_df, latest_date_str)
         
         # 8. Plot cap-weighted history
-        plot_cap_weighted_history(history_df)
+        fig_cap_history = plot_cap_weighted_history(history_df)
 
     # 9. Cap-weighted minus equal-weighted breadth (uses the saved history, incl. today if saved)
     print("\n" + "=" * 70)
@@ -774,7 +835,16 @@ def main():
         print(f"Overlapping dates: {len(breadth_spread_df)}")
         print("Latest spread (pp):")
         print(breadth_spread_df.tail(1).round(2).to_string())
-    plot_breadth_spread(breadth_spread_df)
+    fig_breadth_spread = plot_breadth_spread(breadth_spread_df)
+
+    # 10. One page with every chart
+    build_dashboard([
+        ('Equal-Weighted Breadth', fig_eq_breadth),
+        ('Cap-Weighted Breadth', fig_cap_history),
+        ('Cap- vs Equal-Weighted Breadth Spread', fig_breadth_spread),
+        ('Median Stock Momentum vs SPY', fig_median),
+        ('SPY minus Median Stock Spread', fig_median_spread),
+    ], as_of=prices_df.index[-1].strftime('%Y-%m-%d'))
 
     print("\n" + "=" * 70)
     print("ANALYSIS COMPLETE!")
@@ -787,6 +857,7 @@ def main():
     print(f"  5. sp500_median_momentum.html - Median stock momentum vs SPY")
     print(f"  6. sp500_median_vs_spy_spread.html - SPY minus median stock momentum")
     print(f"  7. sp500_breadth_spread.html - Cap-weighted minus equal-weighted breadth")
+    print(f"  8. {DASHBOARD_FILE} - All charts on one page")
     print(f"\nRun this script periodically to build up cap-weighted breadth history and track")
     print(f"S&P 500 constituent weight changes over time.")
 
