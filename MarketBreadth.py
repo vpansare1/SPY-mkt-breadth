@@ -484,6 +484,122 @@ def plot_median_momentum(median_df, index_label='SPY'):
     print("\nSaved interactive median momentum chart to 'sp500_median_momentum.html'")
     fig.show()
 
+def plot_median_vs_index_spread(median_df, index_label='SPY'):
+    """Spread = index momentum minus median stock momentum (percentage points).
+
+    Positive = the cap-weighted index is beating the typical stock (narrow, concentrated leadership).
+    Negative = the typical stock is beating the index (broad participation).
+    """
+    if f'{MEDIAN_MOMENTUM_WINDOWS[0]}_spread' not in median_df.columns:
+        print(f"\nSkipping median vs {index_label} spread chart: no index data")
+        return
+
+    fig = make_subplots(
+        rows=len(MEDIAN_MOMENTUM_WINDOWS), cols=1,
+        subplot_titles=[f'{w} Spread: {index_label} minus Median Stock' for w in MEDIAN_MOMENTUM_WINDOWS],
+        vertical_spacing=0.10
+    )
+
+    for i, window in enumerate(MEDIAN_MOMENTUM_WINDOWS, 1):
+        spread = median_df[f'{window}_spread']
+        fig.add_trace(go.Scatter(
+            x=spread.index, y=spread.clip(lower=0), fill='tozeroy',
+            fillcolor='rgba(220,20,60,0.20)', line=dict(width=0),
+            hoverinfo='skip', showlegend=False
+        ), row=i, col=1)
+        fig.add_trace(go.Scatter(
+            x=spread.index, y=spread.clip(upper=0), fill='tozeroy',
+            fillcolor='rgba(46,139,87,0.20)', line=dict(width=0),
+            hoverinfo='skip', showlegend=False
+        ), row=i, col=1)
+        fig.add_trace(go.Scatter(
+            x=spread.index, y=spread, line=dict(color='black', width=1.2),
+            name=f'{window} spread', showlegend=False,
+            hovertemplate=f'{window} spread: ' + '%{y:+.1f} pp<extra></extra>'
+        ), row=i, col=1)
+
+        fig.add_hline(y=0, line_color='gray', line_width=1, row=i, col=1)
+        fig.update_xaxes(showgrid=True, gridcolor='lightgray', dtick='M12', row=i, col=1)
+        fig.update_yaxes(title_text='Spread (pp)', showgrid=True, gridcolor='lightgray',
+                         zeroline=False, row=i, col=1)
+
+    fig.update_layout(
+        title_text=(f'{index_label} vs Median S&P 500 Stock: Momentum Spread'
+                    '<br><sup>Red = index beating typical stock (concentrated) | '
+                    'Green = typical stock beating index (broad)</sup>'),
+        title_font_size=18,
+        height=800,
+        width=1100,
+        hovermode='x unified',
+        plot_bgcolor='white'
+    )
+
+    fig.write_html('sp500_median_vs_spy_spread.html')
+    print("Saved interactive median vs index spread chart to 'sp500_median_vs_spy_spread.html'")
+    fig.show()
+
+def calculate_breadth_spread(breadth_df, cap_history_file=DATA_FILE):
+    """Spread = cap-weighted breadth minus equal-weighted breadth, on dates with cap-weighted data.
+
+    Returns a DataFrame indexed by date with one column per momentum window (percentage points).
+    """
+    if not os.path.exists(cap_history_file):
+        return pd.DataFrame()
+
+    cap = pd.read_csv(cap_history_file)
+    cap['Date'] = pd.to_datetime(cap['Date'], format='mixed').dt.normalize()
+    # Same date can appear twice under different string formats; keep the last one written
+    cap = cap.drop_duplicates(subset=['Date', 'Window'], keep='last')
+    cap_wide = cap.pivot(index='Date', columns='Window', values='Breadth_Pct')
+
+    eq = breadth_df.copy()
+    if eq.index.tz is not None:
+        eq.index = eq.index.tz_localize(None)
+    eq.index = eq.index.normalize()
+    eq = eq[~eq.index.duplicated(keep='last')]
+
+    common = cap_wide.index.intersection(eq.index)
+    windows = [w for w in MOMENTUM_WINDOWS if w in cap_wide.columns and w in eq.columns]
+    spread = cap_wide.loc[common, windows] - eq.loc[common, windows]
+    return spread.sort_index()
+
+def plot_breadth_spread(spread_df):
+    """Cap-weighted minus equal-weighted breadth, all windows on one chart"""
+    if spread_df.empty or len(spread_df) < 2:
+        print("\nNot enough overlapping data to plot the cap- vs equal-weighted breadth spread yet.")
+        return
+
+    colors = {'1M': 'steelblue', '3M': 'darkgreen', '6M': 'darkorange', '12M': 'crimson'}
+    fig = go.Figure()
+    for window in spread_df.columns:
+        fig.add_trace(go.Scatter(
+            x=spread_df.index, y=spread_df[window], name=window,
+            mode='lines+markers', line=dict(color=colors.get(window, 'gray'), width=2),
+            marker=dict(size=5),
+            hovertemplate=f'{window}: ' + '%{y:+.1f} pp<extra></extra>'
+        ))
+
+    fig.add_hline(y=0, line_color='gray', line_width=1)
+    fig.update_layout(
+        title=('S&P 500 Breadth Spread: Cap-Weighted minus Equal-Weighted'
+               '<br><sup>Positive = large caps have broader positive momentum than the typical stock | '
+               'Negative = large caps lagging</sup>'),
+        title_font_size=18,
+        xaxis_title='Date',
+        yaxis_title='Spread (pp)',
+        hovermode='x unified',
+        height=550,
+        width=1100,
+        plot_bgcolor='white',
+        legend=dict(title='Momentum Window', yanchor='top', y=0.99, xanchor='left', x=0.01),
+        xaxis=dict(showgrid=True, gridcolor='lightgray', tickmode='auto', nticks=20, tickangle=-45),
+        yaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=False)
+    )
+
+    fig.write_html('sp500_breadth_spread.html')
+    print("Saved interactive breadth spread chart to 'sp500_breadth_spread.html'")
+    fig.show()
+
 def plot_cap_weighted_history(history_df):
     """Plot historical cap-weighted breadth data"""
     if len(history_df) < 2:
@@ -617,6 +733,7 @@ def main():
     print(median_df.tail(1).round(2).T.to_string())
 
     plot_median_momentum(median_df, 'SPY')
+    plot_median_vs_index_spread(median_df, 'SPY')
 
     # 5. Calculate cap-weighted breadth for latest day
     print("\n" + "=" * 70)
@@ -647,7 +764,18 @@ def main():
         
         # 8. Plot cap-weighted history
         plot_cap_weighted_history(history_df)
-    
+
+    # 9. Cap-weighted minus equal-weighted breadth (uses the saved history, incl. today if saved)
+    print("\n" + "=" * 70)
+    print("CAP-WEIGHTED vs EQUAL-WEIGHTED BREADTH SPREAD")
+    print("=" * 70)
+    breadth_spread_df = calculate_breadth_spread(breadth_df)
+    if not breadth_spread_df.empty:
+        print(f"Overlapping dates: {len(breadth_spread_df)}")
+        print("Latest spread (pp):")
+        print(breadth_spread_df.tail(1).round(2).to_string())
+    plot_breadth_spread(breadth_spread_df)
+
     print("\n" + "=" * 70)
     print("ANALYSIS COMPLETE!")
     print("=" * 70)
@@ -657,6 +785,8 @@ def main():
     print(f"  3. {WEIGHTS_FILE} - Historical S&P 500 constituent weights")
     print(f"  4. sp500_cap_weighted_breadth_history.html - Interactive cap-weighted history chart")
     print(f"  5. sp500_median_momentum.html - Median stock momentum vs SPY")
+    print(f"  6. sp500_median_vs_spy_spread.html - SPY minus median stock momentum")
+    print(f"  7. sp500_breadth_spread.html - Cap-weighted minus equal-weighted breadth")
     print(f"\nRun this script periodically to build up cap-weighted breadth history and track")
     print(f"S&P 500 constituent weight changes over time.")
 
