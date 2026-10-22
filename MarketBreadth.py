@@ -377,6 +377,7 @@ def plot_equal_weighted_breadth(breadth_df):
         hovermode='x unified'
     )
     
+    add_crosshairs(fig)
     fig.write_html('sp500_equal_weighted_breadth.html')
     print("\nSaved interactive equal-weighted breadth plots to 'sp500_equal_weighted_breadth.html'")
     fig.show()
@@ -481,6 +482,7 @@ def plot_median_momentum(median_df, index_label='SPY'):
         legend=dict(orientation='h', yanchor='bottom', y=1.03, xanchor='left', x=0)
     )
 
+    add_crosshairs(fig)
     fig.write_html('sp500_median_momentum.html')
     print("\nSaved interactive median momentum chart to 'sp500_median_momentum.html'")
     fig.show()
@@ -536,6 +538,7 @@ def plot_median_vs_index_spread(median_df, index_label='SPY'):
         plot_bgcolor='white'
     )
 
+    add_crosshairs(fig)
     fig.write_html('sp500_median_vs_spy_spread.html')
     print("Saved interactive median vs index spread chart to 'sp500_median_vs_spy_spread.html'")
     fig.show()
@@ -599,6 +602,7 @@ def plot_breadth_spread(spread_df):
         yaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=False)
     )
 
+    add_crosshairs(fig)
     fig.write_html('sp500_breadth_spread.html')
     print("Saved interactive breadth spread chart to 'sp500_breadth_spread.html'")
     fig.show()
@@ -666,9 +670,181 @@ def plot_cap_weighted_history(history_df):
         yaxis=dict(range=[0, 100], showgrid=True, gridwidth=1, gridcolor='lightgray')
     )
     
+    add_crosshairs(fig)
     fig.write_html('sp500_cap_weighted_breadth_history.html')
     print("Saved interactive cap-weighted breadth history to 'sp500_cap_weighted_breadth_history.html'")
     fig.show()
+    return fig
+
+DRAWDOWN_WINDOW_DAYS = 2520      # rolling 10-year high (~252 trading days x 10)
+DRAWDOWN_MIN_DAYS = 252          # newer stocks: measure from their high once they have 1 year of data
+DRAWDOWN_THRESHOLDS = [10, 20, 30, 40, 50]
+
+def calculate_drawdowns(prices_df, window=DRAWDOWN_WINDOW_DAYS, min_days=DRAWDOWN_MIN_DAYS):
+    """Drawdown (%) of each price series from its rolling high (0 = at the high, -25 = 25% below)"""
+    rolling_high = prices_df.rolling(window, min_periods=min_days).max()
+    return (prices_df / rolling_high - 1) * 100
+
+def calculate_drawdown_stats(prices_df, index_prices=None):
+    """Cross-sectional drawdown distribution, SPY's drawdown, and % of stocks past each threshold.
+
+    Columns: median, p10, p25, p75, p90 (p10 = deepest drawdowns, p90 = shallowest),
+    index, spread (index minus median, pp), pct_dd_10 ... pct_dd_50.
+    """
+    dd = calculate_drawdowns(prices_df)
+    counts = dd.notna().sum(axis=1)
+    enough = counts >= MEDIAN_MIN_STOCKS
+
+    stats = pd.DataFrame(index=dd.index)
+    stats['median'] = dd.median(axis=1)
+    for q in (10, 25, 75, 90):
+        stats[f'p{q}'] = dd.quantile(q / 100, axis=1)
+    for t in DRAWDOWN_THRESHOLDS:
+        stats[f'pct_dd_{t}'] = (dd <= -t).sum(axis=1) / counts * 100
+    stats = stats.where(enough)
+
+    if index_prices is not None:
+        idx = index_prices.reindex(prices_df.index)
+        stats['index'] = calculate_drawdowns(idx.to_frame())[idx.name]
+        stats['spread'] = stats['index'] - stats['median']
+
+    return stats.dropna(subset=['median'])
+
+def plot_median_drawdown(dd_stats, index_label='SPY'):
+    """Median stock drawdown with 25-75 and 10-90 percentile bands, vs SPY"""
+    fig = go.Figure()
+    bands = [('p90', 'p10', 'rgba(70,130,180,0.10)', '10th-90th pct of stocks'),
+             ('p75', 'p25', 'rgba(70,130,180,0.25)', '25th-75th pct of stocks')]
+    for upper, lower, color, label in bands:
+        fig.add_trace(go.Scatter(
+            x=dd_stats.index, y=dd_stats[upper], line=dict(width=0),
+            hoverinfo='skip', showlegend=False
+        ))
+        fig.add_trace(go.Scatter(
+            x=dd_stats.index, y=dd_stats[lower], fill='tonexty', fillcolor=color,
+            line=dict(width=0), name=label, customdata=dd_stats[upper],
+            hovertemplate=label + ': %{y:.1f}% to %{customdata:.1f}%<extra></extra>'
+        ))
+
+    fig.add_trace(go.Scatter(
+        x=dd_stats.index, y=dd_stats['median'], line=dict(color='steelblue', width=2),
+        name='Median stock', hovertemplate='Median stock: %{y:.1f}%<extra></extra>'
+    ))
+    if 'index' in dd_stats.columns:
+        fig.add_trace(go.Scatter(
+            x=dd_stats.index, y=dd_stats['index'], line=dict(color='crimson', width=1.5),
+            name=f'{index_label} (cap-weighted)',
+            hovertemplate=f'{index_label}: ' + '%{y:.1f}%<extra></extra>'
+        ))
+
+    fig.add_hline(y=0, line_color='gray', line_width=1)
+    fig.update_layout(
+        title=('S&P 500 Drawdown from Rolling 10-Year High: Median Stock vs ' + index_label +
+               '<br><sup>Stocks with under 10 years of history are measured from their high '
+               'since listing (min 1 year)</sup>'),
+        title_font_size=18,
+        yaxis_title='Drawdown (%)',
+        hovermode='x unified',
+        height=600,
+        width=1100,
+        plot_bgcolor='white',
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+        xaxis=dict(showgrid=True, gridcolor='lightgray', dtick='M12'),
+        yaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=False, ticksuffix='%')
+    )
+
+    add_crosshairs(fig)
+    fig.write_html('sp500_median_drawdown.html')
+    print("\nSaved interactive median drawdown chart to 'sp500_median_drawdown.html'")
+    fig.show()
+    return fig
+
+def plot_drawdown_spread(dd_stats, index_label='SPY'):
+    """Spread = index drawdown minus median stock drawdown (pp).
+
+    Positive = index closer to its high than the typical stock (concentrated).
+    """
+    if 'spread' not in dd_stats.columns:
+        print(f"\nSkipping drawdown spread chart: no {index_label} data")
+        return None
+
+    spread = dd_stats['spread']
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=spread.index, y=spread.clip(lower=0), fill='tozeroy',
+        fillcolor='rgba(220,20,60,0.20)', line=dict(width=0),
+        hoverinfo='skip', showlegend=False
+    ))
+    fig.add_trace(go.Scatter(
+        x=spread.index, y=spread.clip(upper=0), fill='tozeroy',
+        fillcolor='rgba(46,139,87,0.20)', line=dict(width=0),
+        hoverinfo='skip', showlegend=False
+    ))
+    fig.add_trace(go.Scatter(
+        x=spread.index, y=spread, line=dict(color='black', width=1.2),
+        name='Spread', showlegend=False,
+        hovertemplate='Spread: %{y:+.1f} pp<extra></extra>'
+    ))
+
+    fig.add_hline(y=0, line_color='gray', line_width=1)
+    fig.update_layout(
+        title=(f'Drawdown Spread: {index_label} minus Median S&P 500 Stock'
+               '<br><sup>Red = index nearer its high than the typical stock (concentrated) | '
+               'Green = typical stock nearer its high than the index</sup>'),
+        title_font_size=18,
+        yaxis_title='Spread (pp)',
+        hovermode='x unified',
+        height=500,
+        width=1100,
+        plot_bgcolor='white',
+        xaxis=dict(showgrid=True, gridcolor='lightgray', dtick='M12'),
+        yaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=False)
+    )
+
+    add_crosshairs(fig)
+    fig.write_html('sp500_drawdown_spread.html')
+    print("Saved interactive drawdown spread chart to 'sp500_drawdown_spread.html'")
+    fig.show()
+    return fig
+
+def plot_drawdown_thresholds(dd_stats):
+    """% of stocks at least X% below their rolling 10-year high, one line per threshold"""
+    colors = ['#f4a259', '#e8702a', '#c9401c', '#962015', '#4f0b0f']  # lighter = shallower
+    fig = go.Figure()
+    for t, color in zip(DRAWDOWN_THRESHOLDS, colors):
+        fig.add_trace(go.Scatter(
+            x=dd_stats.index, y=dd_stats[f'pct_dd_{t}'], name=f'{t}%+ drawdown',
+            line=dict(color=color, width=1.8),
+            hovertemplate=f'{t}%+ dd: ' + '%{y:.1f}% of stocks<extra></extra>'
+        ))
+
+    fig.update_layout(
+        title=('% of S&P 500 Stocks in Drawdown (from rolling 10-year high)'
+               '<br><sup>Click legend entries to show/hide thresholds</sup>'),
+        title_font_size=18,
+        yaxis_title='% of stocks',
+        hovermode='x unified',
+        height=600,
+        width=1100,
+        plot_bgcolor='white',
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+        xaxis=dict(showgrid=True, gridcolor='lightgray', dtick='M12'),
+        yaxis=dict(range=[0, 100], showgrid=True, gridcolor='lightgray', ticksuffix='%')
+    )
+
+    add_crosshairs(fig)
+    fig.write_html('sp500_drawdown_thresholds.html')
+    print("Saved interactive drawdown threshold chart to 'sp500_drawdown_thresholds.html'")
+    fig.show()
+    return fig
+
+def add_crosshairs(fig):
+    """Dotted crosshair lines that follow the cursor on every axis"""
+    spike = dict(showspikes=True, spikemode='across', spikesnap='cursor',
+                 spikethickness=1, spikedash='dot', spikecolor='#555')
+    fig.update_xaxes(**spike, hoverformat='%Y-%m-%d')  # full date in hover label
+    fig.update_yaxes(**spike)
+    fig.update_layout(spikedistance=-1, hoverdistance=-1)
     return fig
 
 DASHBOARD_FILE = 'sp500_mkt_breadth_dash.html'
@@ -795,6 +971,22 @@ def main():
     fig_median = plot_median_momentum(median_df, 'SPY')
     fig_median_spread = plot_median_vs_index_spread(median_df, 'SPY')
 
+    # 4c. Drawdown distribution from rolling 10-year highs
+    print("\n" + "=" * 70)
+    print("CALCULATING DRAWDOWNS FROM ROLLING 10-YEAR HIGHS")
+    print("=" * 70)
+
+    dd_stats = calculate_drawdown_stats(prices_df, spy_prices)
+
+    print("\n" + "-" * 70)
+    print("CURRENT DRAWDOWN DISTRIBUTION (%)")
+    print("-" * 70)
+    print(dd_stats.tail(1).round(2).T.to_string())
+
+    fig_dd = plot_median_drawdown(dd_stats, 'SPY')
+    fig_dd_spread = plot_drawdown_spread(dd_stats, 'SPY')
+    fig_dd_thresholds = plot_drawdown_thresholds(dd_stats)
+
     # 5. Calculate cap-weighted breadth for latest day
     print("\n" + "=" * 70)
     print("CALCULATING MARKET-CAP WEIGHTED BREADTH (LATEST DAY)")
@@ -844,6 +1036,9 @@ def main():
         ('Cap- vs Equal-Weighted Breadth Spread', fig_breadth_spread),
         ('Median Stock Momentum vs SPY', fig_median),
         ('SPY minus Median Stock Spread', fig_median_spread),
+        ('Median Stock Drawdown vs SPY', fig_dd),
+        ('SPY minus Median Stock Drawdown', fig_dd_spread),
+        ('% of Stocks in Drawdown', fig_dd_thresholds),
     ], as_of=prices_df.index[-1].strftime('%Y-%m-%d'))
 
     print("\n" + "=" * 70)
@@ -857,7 +1052,10 @@ def main():
     print(f"  5. sp500_median_momentum.html - Median stock momentum vs SPY")
     print(f"  6. sp500_median_vs_spy_spread.html - SPY minus median stock momentum")
     print(f"  7. sp500_breadth_spread.html - Cap-weighted minus equal-weighted breadth")
-    print(f"  8. {DASHBOARD_FILE} - All charts on one page")
+    print(f"  8. sp500_median_drawdown.html - Median stock drawdown vs SPY (rolling 10-year high)")
+    print(f"  9. sp500_drawdown_spread.html - SPY minus median stock drawdown")
+    print(f"  10. sp500_drawdown_thresholds.html - % of stocks in 10-50%+ drawdowns")
+    print(f"  11. {DASHBOARD_FILE} - All charts on one page")
     print(f"\nRun this script periodically to build up cap-weighted breadth history and track")
     print(f"S&P 500 constituent weight changes over time.")
 
