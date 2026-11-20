@@ -2,7 +2,7 @@ name: Daily S&P 500 Breadth Analysis
 
 on:
   schedule:
-    - cron: '0 4 * * *'  # 11 PM ET (4 AM UTC next day), every day including weekends
+    - cron: '17 23 * * *'  # 23:17 UTC = 6:17 PM EST / 7:17 PM EDT, every day incl. weekends (GitHub often starts it hours late; odd minute avoids top-of-hour congestion)
   workflow_dispatch:
 
 jobs:
