@@ -110,7 +110,7 @@ def scrape_sp500_components():
         # Load from existing file if available
         if os.path.exists('sp500_weights_history.csv'):
             weights_df = pd.read_csv('sp500_weights_history.csv', index_col=0)
-            latest_date = weights_df.columns[-1]
+            latest_date = max(weights_df.columns, key=lambda c: pd.to_datetime(c, format='mixed'))
             latest_weights = weights_df[latest_date].dropna()
             df = pd.DataFrame({
                 'symbol': latest_weights.index,
@@ -303,7 +303,7 @@ def save_weights_history(weights_df, date_str):
         combined = pd.DataFrame(weights_for_date)
     
     # Sort columns by date
-    combined = combined[sorted(combined.columns)]
+    combined = combined[sorted(combined.columns, key=lambda c: pd.to_datetime(c, format='mixed'))]
     
     # Save with symbols as rows, dates as columns
     combined.to_csv(WEIGHTS_FILE)
@@ -1015,8 +1015,10 @@ def main():
         latest_date_str = cap_weighted_latest['Date'].iloc[0]
         weights_history = save_weights_history(components_df, latest_date_str)
         
-        # 8. Plot cap-weighted history
-        fig_cap_history = plot_cap_weighted_history(history_df)
+
+    # 8. Plot cap-weighted history from the saved file (even if today's row was skipped)
+    if os.path.exists(DATA_FILE):
+        fig_cap_history = plot_cap_weighted_history(pd.read_csv(DATA_FILE))
 
     # 9. Cap-weighted minus equal-weighted breadth (uses the saved history, incl. today if saved)
     print("\n" + "=" * 70)
