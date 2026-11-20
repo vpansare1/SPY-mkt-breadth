@@ -235,14 +235,15 @@ def calculate_equal_weighted_breadth(prices_df):
     
     return pd.DataFrame(breadth_data)
 
-def calculate_cap_weighted_breadth(prices_df, weights_df, min_total_weight=90.0):
+def calculate_cap_weighted_breadth(prices_df, weights_df, min_total_weight=90.0, target_date=None):
     """Calculate market-cap weighted breadth for most recent day.
 
     Skips any window where total_weight < min_total_weight, which indicates
     a partial data download (silent NaN fill from yfinance). Weights are
     normalized to sum to ~100, so 90.0 means 90% coverage.
     """
-    latest_date = prices_df.index[-1] #UPDATE THIS TO -2 IF GETTING WEIRD OUTPUTS
+    # Latest complete day by default (incomplete trailing days are dropped in main)
+    latest_date = prices_df.index[-1] if target_date is None else target_date
     results = []
     
     # Create weight mapping
@@ -283,11 +284,16 @@ def calculate_cap_weighted_breadth(prices_df, weights_df, min_total_weight=90.0)
     return pd.DataFrame(results)
 
 def save_cap_weighted_data(new_data):
-    """Append new cap-weighted data to historical file"""
+    """Merge new cap-weighted rows into the history file.
+
+    Rows are replaced by (date, window), comparing parsed dates so '3/2/2026' and
+    '2026-03-02' count as the same day. Windows not in new_data are left untouched.
+    """
     if os.path.exists(DATA_FILE):
         existing = pd.read_csv(DATA_FILE)
-        # Remove any existing data for the same date
-        existing = existing[existing['Date'] != new_data['Date'].iloc[0]]
+        key = lambda df: list(zip(pd.to_datetime(df['Date'], format='mixed').dt.normalize(), df['Window']))
+        new_keys = set(key(new_data))
+        existing = existing[[k not in new_keys for k in key(existing)]]
         combined = pd.concat([existing, new_data], ignore_index=True)
     else:
         combined = new_data
@@ -295,6 +301,45 @@ def save_cap_weighted_data(new_data):
     combined.to_csv(DATA_FILE, index=False)
     print(f"\nSaved cap-weighted data to {DATA_FILE}")
     return combined
+
+CATCHUP_TRADING_DAYS = 5
+
+def load_weights_for_date(target_date, fallback_df, max_gap_days=5):
+    """Saved weights from the snapshot nearest target_date (within max_gap_days),
+    else fallback_df (today's weights). Returns (weights_df, source description)."""
+    if os.path.exists(WEIGHTS_FILE):
+        hist = pd.read_csv(WEIGHTS_FILE, index_col=0)
+        dates = pd.to_datetime(hist.columns, format='mixed').normalize()
+        gaps = abs((dates - pd.Timestamp(target_date).normalize()).days)
+        if len(gaps) and gaps.min() <= max_gap_days:
+            col = hist.columns[gaps.argmin()]
+            w = hist[col].dropna()
+            return pd.DataFrame({'symbol': w.index, 'weight': w.values}), f"saved weights from {col}"
+    return fallback_df, "current weights (no saved snapshot within 5 days)"
+
+def catch_up_cap_weighted(prices_df, current_weights_df, n_days=CATCHUP_TRADING_DAYS):
+    """Recalculate any of the last n_days trading days that are missing or have fewer
+    than all windows in the history file. Returns the number of days filled."""
+    existing = pd.read_csv(DATA_FILE) if os.path.exists(DATA_FILE) else pd.DataFrame(columns=['Date', 'Window'])
+    saved = pd.to_datetime(existing['Date'], format='mixed').dt.normalize()
+    windows_saved = existing.groupby(saved)['Window'].nunique()
+
+    filled = 0
+    for d in prices_df.index[-n_days:]:
+        day = pd.Timestamp(d.date())
+        if windows_saved.get(day, 0) >= len(MOMENTUM_WINDOWS):
+            continue
+        weights_df, source = load_weights_for_date(day, current_weights_df)
+        print(f"  Filling {day.strftime('%Y-%m-%d')} using {source}")
+        rows = calculate_cap_weighted_breadth(prices_df, weights_df, target_date=d)
+        if rows.empty:
+            print(f"    Still below the coverage threshold - leaving {day.strftime('%Y-%m-%d')} for a later run")
+            continue
+        save_cap_weighted_data(rows)
+        filled += 1
+    if filled == 0:
+        print(f"  Last {n_days} trading days are complete - nothing to fill")
+    return filled
 
 def save_weights_history(weights_df, date_str):
     """Save S&P 500 constituent weights over time"""
@@ -1036,6 +1081,12 @@ def main():
         latest_date_str = cap_weighted_latest['Date'].iloc[0]
         weights_history = save_weights_history(components_df, latest_date_str)
         
+
+    # 7b. Fill any missing/partial cap-weighted days in the last few trading days
+    print("\n" + "=" * 70)
+    print(f"CHECKING LAST {CATCHUP_TRADING_DAYS} TRADING DAYS FOR MISSING CAP-WEIGHTED DATA")
+    print("=" * 70)
+    catch_up_cap_weighted(prices_df, components_df)
 
     # 8. Plot cap-weighted history from the saved file (even if today's row was skipped)
     if os.path.exists(DATA_FILE):
