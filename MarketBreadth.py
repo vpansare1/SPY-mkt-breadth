@@ -193,6 +193,25 @@ def download_price_data(symbols, start_date, end_date):
     prices_df = pd.DataFrame(all_data)
     return prices_df
 
+def drop_incomplete_trailing_days(prices_df, min_coverage=0.9, lookback=20):
+    """Drop trailing days where most stocks have no price yet.
+
+    Yahoo sometimes returns a placeholder row for the current day (before the open or
+    before data is finalized) with prices missing for most stocks. Every calculation
+    would otherwise treat that day as the latest. A day is kept once at least
+    min_coverage of the typical recent ticker count has a price.
+    """
+    counts = prices_df.notna().sum(axis=1)
+    reference = counts.iloc[-lookback:].max()
+    dropped = []
+    while len(prices_df) > 1 and counts.iloc[len(prices_df) - 1] < min_coverage * reference:
+        dropped.append(f"{prices_df.index[-1].strftime('%Y-%m-%d')} ({counts.iloc[len(prices_df) - 1]} of {reference} tickers)")
+        prices_df = prices_df.iloc[:-1]
+    if dropped:
+        print(f"\nDropped incomplete trailing day(s): {', '.join(dropped)}")
+    print(f"Latest complete trading day: {prices_df.index[-1].strftime('%Y-%m-%d')}")
+    return prices_df
+
 def calculate_momentum(prices_df, window):
     """Calculate rate of change (momentum) over specified window"""
     # ROC = (Price_today - Price_window_ago) / Price_window_ago
@@ -916,10 +935,12 @@ def main():
     start_date = end_date - timedelta(days=LOOKBACK_YEARS*365 + 365)  # Extra buffer
     
     prices_df = download_price_data(symbols, start_date, end_date)
-    
+
     if prices_df.empty:
         print("ERROR: No price data downloaded. Exiting.")
         return
+
+    prices_df = drop_incomplete_trailing_days(prices_df)
     
     # Data quality diagnostics: non-NaN ticker counts for recent dates
     print("\n" + "-" * 70)
